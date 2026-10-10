@@ -1,0 +1,35 @@
+version: 0.2
+
+env:
+  variables:
+    AWS_DEFAULT_REGION: "ap-south-1"
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.11
+    commands:
+      - python -m pip install --upgrade pip
+      - python -m pip install flake8 pytest
+  pre_build:
+    commands:
+      - flake8 app.py test_app.py --max-line-length=100
+      - pytest -v
+      - test -n "$ECR_URI" || (echo "Set the ECR_URI environment variable" && exit 1)
+      - ECR_REGISTRY="${ECR_URI%%/*}"
+      - aws ecr get-login-password --region "$AWS_DEFAULT_REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+      - export IMAGE_TAG="$CODEBUILD_RESOLVED_SOURCE_VERSION"
+      - if [ -z "$IMAGE_TAG" ]; then IMAGE_TAG="$CODEBUILD_BUILD_NUMBER"; fi
+  build:
+    commands:
+      - docker build -t "$ECR_URI:$IMAGE_TAG" .
+  post_build:
+    commands:
+      - docker push "$ECR_URI:$IMAGE_TAG"
+      - docker tag "$ECR_URI:$IMAGE_TAG" "$ECR_URI:latest"
+      - docker push "$ECR_URI:latest"
+      - printf '{"image":"%s","tag":"%s","commit":"%s"}\n' "$ECR_URI" "$IMAGE_TAG" "$CODEBUILD_RESOLVED_SOURCE_VERSION" > image-metadata.json
+
+artifacts:
+  files:
+    - image-metadata.json
